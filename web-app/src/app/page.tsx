@@ -1,103 +1,156 @@
+"use client"
+
+import { useState } from "react";
 import Image from "next/image";
 
-export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+export default function GrammarSelector() {
+  const examples = [
+    {
+      title: "Balanced 0's and 1's",
+      grammar: `S -> 0 S 1 | ε`
+    },
+    {
+      title: "Even-Length Palindromes",
+      grammar: `S -> a S a | b S b | ε`
+    },
+    {
+      title: "AnBn",
+      grammar: `S -> a S b | ε`
+    },
+    {
+      title: "Simple Assignment",
+      grammar: `S -> id = num ;`
+    },
+    {
+      title: "Arithmetic Expressions",
+      grammar: `E -> T E'\nE' -> + T E' | ε\nT -> F T'\nT' -> * F T' | ε\nF -> ( E ) | id`
+    },
+    {
+      title: "Block of Statements",
+      grammar: `Block -> { Stmts }\nStmts -> Stmt Stmts | ε\nStmt -> id = num ;`
+    },
+    {
+      title: "Simple HTML",
+      grammar: `HTML -> <tag> text </tag> | text`
+    },
+    {
+      title: "Simple Loop",
+      grammar: `Loop -> while ( Cond ) Stmt`
+    },
+    {
+      title: "If-Else",
+      grammar: `S -> if ( C ) S else S | assign`
+    },
+    {
+      title: "Repeated AB Pattern",
+      grammar: `S -> A S'\nS' -> B S' | ε\nA -> a\nB -> b`
+    }
+  ];
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [customGrammar, setCustomGrammar] = useState("");
+  const [error, setError] = useState("");
+
+  const handleGrammarChange = (value: string) => {
+    setCustomGrammar(value);
+
+    const lines = value.trim().split("\n");
+    for (let line of lines) {
+      if (!line.includes("->")) {
+        setError("Each rule must contain '->'");
+        return;
+      }
+      const [lhs, rhs] = line.split("->");
+      if (!lhs.trim() || !rhs.trim()) {
+        setError("Missing LHS or RHS in a production");
+        return;
+      }
+      if (rhs.includes("|") && !/\s\|\s/.test(rhs)) {
+        setError("Use spaces around '|' for clarity (e.g., A -> x | y)");
+        return;
+      }
+    }
+    setError("");
+  };
+
+  const handleAnalyze = () => {
+    const grammarLines = customGrammar.trim().split("\n");
+    const json = {
+      grammar: grammarLines.map((line) => {
+        const [lhs, rhs] = line.split("->").map(part => part.trim());
+        return {
+          lhs,
+          rhs: rhs.split(" | ").map(prod => prod.trim())
+        };
+      }),
+      start_symbol: grammarLines[0]?.split("->")[0].trim() || ""
+    };
+    console.log(JSON.stringify(json, null, 2));
+  };
+
+  return (
+    <div className="flex flex-col min-h-screen">
+      {/* Header */}
+      <header className="w-full flex justify-between items-center px-6 py-4 border-b dark:border-gray-800">
+        <div className="flex items-center gap-2">
+          <Image src="/logo.svg" alt="App logo" width={120} height={120} />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-lg">LL1 Checker</span>
+        </div>
+        <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-300">
+          Powered by Next.js
+          <Image src="/next.svg" alt="Next.js logo" width={60} height={14} className="dark:invert" />
+        </div>
+      </header>
+
+      {/* Main content */}
+      <main className="flex-grow flex flex-col gap-6 p-8 sm:p-16 max-w-3xl mx-auto">
+        <h1 className="text-2xl sm:text-3xl font-semibold text-center">Select an Example Grammar LL(1)</h1>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {examples.map((ex, idx) => (
+            <button
+              key={idx}
+              className={`rounded-lg border px-4 py-2 text-left transition-colors shadow-sm text-sm sm:text-base font-medium hover:bg-gray-100 dark:hover:bg-gray-800 ${
+                selectedIndex === idx
+                  ? "bg-gray-200 dark:bg-gray-700 border-gray-500"
+                  : "bg-white dark:bg-black border-gray-300"
+              }`}
+              onClick={() => {
+                setSelectedIndex(idx);
+                setCustomGrammar(ex.grammar);
+                setError("");
+              }}
+            >
+              {ex.title}
+            </button>
+          ))}
+        </div>
+
+        <div>
+          <h2 className="text-lg font-medium mb-2">Grammar (edit or write your own):</h2>
+          <textarea
+            className={`w-full min-h-[160px] p-3 border rounded-md bg-gray-50 dark:bg-gray-900 text-sm font-mono resize-none ${
+              error ? "border-red-500" : "border-gray-300 dark:border-gray-700"
+            }`}
+            value={customGrammar}
+            onChange={(e) => handleGrammarChange(e.target.value)}
+            placeholder="E.g. S -> a S b | ε"
+          />
+          {error && <p className="mt-2 text-red-600 text-sm">{error}</p>}
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            onClick={handleAnalyze}
+            disabled={!!error || !customGrammar.trim()}
+            className={`mt-4 px-6 py-2 bg-black text-white border border-white rounded-md font-medium text-sm transition-colors hover:bg-white hover:text-black hover:border-black disabled:opacity-40`}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            Analizar
+          </button>
         </div>
       </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
     </div>
   );
 }
