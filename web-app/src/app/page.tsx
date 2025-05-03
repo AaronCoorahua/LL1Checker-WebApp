@@ -101,12 +101,6 @@ export default function GrammarSelector() {
     };
   };
 
-  const renderTree = (node: TreeNode): JSX.Element => (
-    <ul className="ml-4 list-disc">
-      <li className="font-medium">{node.label}</li>
-      {node.children?.map((c, i) => <li key={i}>{renderTree(c)}</li>)}
-    </ul>
-  );
 
   const handleTraceTree = async () => {
     try {
