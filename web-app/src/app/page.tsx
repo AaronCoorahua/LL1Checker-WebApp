@@ -1,99 +1,184 @@
-"use client"
+"use client";
 
-import { useState } from "react";
+import { JSX, useEffect, useState } from "react";
 import Image from "next/image";
+import axios from "axios";
+import Tree from 'react-d3-tree';
+import Chatbot from "./chatbot"
+
+
+interface TraceEntry {
+  stack: string[];
+  input: string[];
+  rule: string;
+}
+interface TreeNode {
+  label: string;
+  children?: TreeNode[];
+}
+
+const toD3 = (n: TreeNode): any => ({
+  name: n.label,
+  children: n.children?.map(toD3) ?? [],
+});
 
 export default function GrammarSelector() {
+  /* ---------- ejemplos ---------- */
   const examples = [
-    {
-      title: "Balanced 0's and 1's",
-      grammar: `S -> 0 S 1 | ε`
-    },
-    {
-      title: "Even-Length Palindromes",
-      grammar: `S -> a S a | b S b | ε`
-    },
-    {
-      title: "AnBn",
-      grammar: `S -> a S b | ε`
-    },
-    {
-      title: "Simple Assignment",
-      grammar: `S -> id = num ;`
-    },
-    {
-      title: "Arithmetic Expressions",
-      grammar: `E -> T E'\nE' -> + T E' | ε\nT -> F T'\nT' -> * F T' | ε\nF -> ( E ) | id`
-    },
-    {
-      title: "Block of Statements",
-      grammar: `Block -> { Stmts }\nStmts -> Stmt Stmts | ε\nStmt -> id = num ;`
-    },
-    {
-      title: "Simple HTML",
-      grammar: `HTML -> <tag> text </tag> | text`
-    },
-    {
-      title: "Simple Loop",
-      grammar: `Loop -> while ( Cond ) Stmt`
-    },
-    {
-      title: "If-Else",
-      grammar: `S -> if ( C ) S else S | assign`
-    },
-    {
-      title: "Repeated AB Pattern",
-      grammar: `S -> A S'\nS' -> B S' | ε\nA -> a\nB -> b`
-    }
+    { title: "Balanced 0's and 1's", grammar: `S -> 0 S 1 | ε` },
+    { title: "List of ID's", grammar: `L  -> [ Items ]\nItems -> id Items'\nItems' -> , id Items' | ε`},
+    { title: "AnBn", grammar: `S -> a S b | ε` },
+    { title: "Simple Assignment", grammar: `S -> id = num ;` },
+    { title: "Arithmetic Expressions", grammar: `E -> T E'\nE' -> + T E' | ε\nT -> F T'\nT' -> * F T' | ε\nF -> ( E ) | id` },
+    { title: "Block of Statements", grammar: `Block -> { Stmts }\nStmts -> Stmt Stmts | ε\nStmt -> id = num ;` },
+    { title: "Simple HTML", grammar: `HTML -> <tag> text </tag> | text` },
+    { title: "Simple Loop", grammar: `Loop -> while ( Cond ) Stmt` },
+    { title: "If-Else", grammar: `S -> if ( C ) S else S | assign` },
+    { title: "Repeated AB Pattern", grammar: `S -> A S'\nS' -> B S' | ε\nA -> a\nB -> b` }
   ];
 
+  useEffect(() => {
+    const styleTag = document.createElement("style");
+    styleTag.innerHTML = `
+      .custom-link {
+        stroke: white !important;
+        stroke-width: 2 !important;
+      }
+    `;
+    document.head.appendChild(styleTag);
+    return () => {
+      document.head.removeChild(styleTag);
+    };
+  }, []);
+
+  /* ---------- state ---------- */
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [customGrammar, setCustomGrammar] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError]   = useState("");
+  const [result, setResult] = useState<any | null>(null);
 
-  const handleGrammarChange = (value: string) => {
-    setCustomGrammar(value);
+  const [copiedSymbol, setCopiedSymbol] = useState<string | null>(null);
 
-    const lines = value.trim().split("\n");
-    for (let line of lines) {
-      if (!line.includes("->")) {
-        setError("Each rule must contain '->'");
-        return;
-      }
-      const [lhs, rhs] = line.split("->");
-      if (!lhs.trim() || !rhs.trim()) {
-        setError("Missing LHS or RHS in a production");
-        return;
-      }
-      if (rhs.includes("|") && !/\s\|\s/.test(rhs)) {
-        setError("Use spaces around '|' for clarity (e.g., A -> x | y)");
-        return;
-      }
+  const [traceResult, setTraceResult] =
+    useState<{ trace: TraceEntry[]; tree: TreeNode } | null>(null);
+  const [inputString, setInputString] = useState("");
+  const [maxSteps,   setMaxSteps]     = useState(100);
+
+  /* ---------- helpers ---------- */
+  const grammarToPayload = () => {
+    const lines = customGrammar.trim().split("\n");
+    return {
+      grammar: lines.map(l => {
+        const [lhs, rhs] = l.split("->").map(p => p.trim());
+        return { lhs, rhs: rhs.split(" | ").map(p => p.trim()) };
+      }),
+      start_symbol: lines[0]?.split("->")[0].trim() || ""
+    };
+  };
+
+  const renderTree = (node: TreeNode): JSX.Element => (
+    <ul className="ml-4 list-disc">
+      <li className="font-medium">{node.label}</li>
+      {node.children?.map((c, i) => <li key={i}>{renderTree(c)}</li>)}
+    </ul>
+  );
+
+  const handleTraceTree = async () => {
+    try {
+      const res = await axios.post(
+        `${process.env.NEXT_PUBLIC_API_BASE_URL}/trace-tree`,
+        { ...grammarToPayload(),
+          input_string: inputString,
+          max_steps: Math.max(1, maxSteps) }
+      );
+      setTraceResult(res.data);
+    } catch (e) { console.error(e); setTraceResult(null); }
+  };
+
+  const handleGrammarChange = (txt: string) => {
+    setCustomGrammar(txt);
+    const lines = txt.trim().split("\n");
+    for (const l of lines) {
+      if (!l.includes("->")) { if (txt.trim()===""){setError("");} else setError("Each rule must contain '->'"); return;}
+      const [lhs, rhs] = l.split("->");
+      if (!lhs.trim() || !rhs.trim()) { setError("Missing LHS or RHS."); return; }
+      if (rhs.includes("|") && !/\s\|\s/.test(rhs)) { setError("Add spaces around |."); return; }
+      if (lhs.includes("|")) { setError("'|' cannot be on LHS."); return; }
     }
     setError("");
   };
 
-  const handleAnalyze = () => {
-    const grammarLines = customGrammar.trim().split("\n");
-    const json = {
-      grammar: grammarLines.map((line) => {
-        const [lhs, rhs] = line.split("->").map(part => part.trim());
-        return {
-          lhs,
-          rhs: rhs.split(" | ").map(prod => prod.trim())
-        };
-      }),
-      start_symbol: grammarLines[0]?.split("->")[0].trim() || ""
-    };
-    console.log(JSON.stringify(json, null, 2));
+  const handleAnalyze = async () => {
+    try {
+      const res = await axios.post(
+        `${process.env.NEXT_PUBLIC_API_BASE_URL}/first-follow`,
+        grammarToPayload()
+      );
+      setResult(res.data);
+    } catch { setResult(null); }
   };
+
+  const copyToClipboard = (s:string) => {
+    navigator.clipboard.writeText(s);
+    setCopiedSymbol(s);
+    setTimeout(()=>setCopiedSymbol(null),1200);
+  };
+
+  /* ---------- parsing‑table ---------- */
+  const renderParsingTable = () => {
+    if (!result || !result.parse_table) return null;
+  
+    const hdrs = ["Non-Terminal", ...result.terminals];
+  
+    return (
+      <div className="mt-12">
+        <h3 className="text-xl font-semibold mb-4">Parsing Table</h3>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm border border-gray-700 dark:border-gray-500">
+            <thead className="bg-black text-white">
+              <tr>{hdrs.map(h => (
+                <th key={h} className="p-2 border-r border-gray-600 last:border-r-0">{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody>
+              {result.non_terminals.map((nt: string) => (
+                <tr key={nt} className="border-t border-gray-600">
+                  <td className="p-2 border-r border-gray-600 font-semibold">{nt}</td>
+                  {result.terminals.map((t: string) => (
+                    <td key={t} className="p-2 border-r border-gray-600 font-mono text-xs">
+                      {result.parse_table[nt][t]}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+
+  const renderNode = ({ nodeDatum }: { nodeDatum: any }) => (
+    <g>
+      <circle r={8} fill="#fff" />
+      <text
+        fill="#fff"
+        fontSize={30}  
+        fontWeight={600}
+        x={12}
+        dy={5}
+      >
+        {nodeDatum.name}
+      </text>
+    </g>
+  );
 
   return (
     <div className="flex flex-col min-h-screen">
-      {/* Header */}
       <header className="w-full flex justify-between items-center px-6 py-4 border-b dark:border-gray-800">
         <div className="flex items-center gap-2">
-          <Image src="/logo.svg" alt="App logo" width={120} height={120} />
+          <Image src="/logo.png" alt="App logo" width={120} height={120} />
         </div>
         <div className="flex items-center gap-2">
           <span className="font-semibold text-lg">LL1 Checker</span>
@@ -104,8 +189,7 @@ export default function GrammarSelector() {
         </div>
       </header>
 
-      {/* Main content */}
-      <main className="flex-grow flex flex-col gap-6 p-8 sm:p-16 max-w-3xl mx-auto">
+      <main className="flex-grow flex flex-col gap-6 p-8 sm:p-16 max-w-5xl mx-auto">
         <h1 className="text-2xl sm:text-3xl font-semibold text-center">Select an Example Grammar LL(1)</h1>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -121,6 +205,7 @@ export default function GrammarSelector() {
                 setSelectedIndex(idx);
                 setCustomGrammar(ex.grammar);
                 setError("");
+                setResult(null);
               }}
             >
               {ex.title}
@@ -129,7 +214,20 @@ export default function GrammarSelector() {
         </div>
 
         <div>
-          <h2 className="text-lg font-medium mb-2">Grammar (edit or write your own):</h2>
+          <h2 className="text-lg font-medium mb-2 flex items-center justify-between">Grammar (edit or write your own):
+            <div className="flex gap-2">
+              {["->", "|", "ε"].map((symbol) => (
+                <button
+                  key={symbol}
+                  onClick={() => copyToClipboard(symbol)}
+                  className="px-2 py-1 text-sm border rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                >
+                  {copiedSymbol === symbol ? "Copied!" : symbol}
+                </button>
+              ))}
+            </div>
+          </h2>
+
           <textarea
             className={`w-full min-h-[160px] p-3 border rounded-md bg-gray-50 dark:bg-gray-900 text-sm font-mono resize-none ${
               error ? "border-red-500" : "border-gray-300 dark:border-gray-700"
@@ -145,12 +243,130 @@ export default function GrammarSelector() {
           <button
             onClick={handleAnalyze}
             disabled={!!error || !customGrammar.trim()}
-            className={`mt-4 px-6 py-2 bg-black text-white border border-white rounded-md font-medium text-sm transition-colors hover:bg-white hover:text-black hover:border-black disabled:opacity-40`}
+            className="mt-4 px-6 py-2 bg-black text-white border border-white rounded-md font-medium text-sm transition-transform transition-colors hover:bg-white hover:text-black hover:border-black hover:scale-105 active:scale-95 disabled:opacity-40"
           >
-            Analizar
+            Analyze
           </button>
         </div>
+
+        {result && result.is_LL1 === true && result.conflicts.length === 0 && (
+          <>
+            <div className="mt-8">
+              <h3 className="text-xl font-semibold mb-4">FIRST & FOLLOW Sets</h3>
+              <table className="w-full text-sm text-left border border-gray-700 dark:border-gray-500">
+                <thead className="bg-black text-white">
+                  <tr>
+                    <th className="p-2">Non-Terminal</th>
+                    <th className="p-2">FIRST</th>
+                    <th className="p-2">FOLLOW</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.non_terminals.map((nt: any) => (
+                    <tr key={nt} className="border-t border-gray-700 dark:border-gray-600">
+                      <td className="p-2 font-mono">{nt}</td>
+                      <td className="p-2 font-mono">{result.first_sets[nt].join(", ")}</td>
+                      <td className="p-2 font-mono">{result.follow_sets[nt].join(", ")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {renderParsingTable()}
+          </>
+        )}
+
+        {result && !result.is_LL1 && (
+          <div className="mt-8 border border-red-500 p-4 rounded-md bg-red-50 text-red-900">
+            <h3 className="text-xl font-bold mb-2">⚠️ La gramática NO es LL(1)</h3>
+            {result.conflicts.map((conflict: any, i: any) => (
+              <div key={i} className="mb-4">
+                <p><strong>Conflicto:</strong> {conflict.type}</p>
+                <p><strong>No terminal:</strong> {conflict.non_terminal}</p>
+                <p><strong>Producciones:</strong> {conflict.productions.join("  |  ")}</p>
+                <p><strong>Intersección:</strong> {conflict.intersection.join(", ")}</p>
+                <p className="italic text-sm mt-1">💡 {conflict.suggestion}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+<div className="mt-12">
+          <h3 className="text-xl font-semibold mb-4">Run LL(1) Parser</h3>
+
+          <label className="block mb-1 font-medium">Input (tokens separated by a space)</label>
+          <textarea
+            rows={2}
+            value={inputString}
+            onChange={e=>setInputString(e.target.value)}
+            placeholder="id + id"
+            className="w-full p-2 border rounded bg-gray-50 dark:bg-gray-900 font-mono"
+          />
+
+          <label className="block mt-4 mb-1 font-medium">Max number of steps</label>
+          <input
+            type="number"
+            min={1}
+            value={maxSteps}
+            onChange={e=>setMaxSteps(Math.max(1, Number(e.target.value)))}
+            className="w-32 p-2 border rounded"
+          />
+
+          <button
+            onClick={handleTraceTree}
+            disabled={!customGrammar.trim() || !inputString.trim()}
+            className="ml-5 mt-4 px-6 py-2 bg-black text-white border border-white rounded-md font-medium text-sm transition-transform transition-colors hover:bg-white hover:text-black hover:border-black hover:scale-105 active:scale-95 disabled:opacity-40">            Trace & Tree
+          </button>
+        </div>
+
+        {/* ---- TRACE STACK TABLE ---- */}
+        {traceResult && (
+          <div className="mt-12">
+            <h3 className="text-xl font-semibold mb-4">Parsing Trace (Stack / Input / Rule)</h3>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs border border-gray-700 dark:border-gray-500">
+                <thead className="bg-black text-white">
+                  <tr>
+                    <th className="p-2 border-r border-gray-600">Stack</th>
+                    <th className="p-2 border-r border-gray-600">Input</th>
+                    <th className="p-2">Rule</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {traceResult.trace.map((t,i)=>(
+                    <tr key={i} className="border-t border-gray-600">
+                      <td className="p-2 font-mono border-r border-gray-600">{t.stack.join(" ")}</td>
+                      <td className="p-2 font-mono border-r border-gray-600">{t.input.join(" ")}</td>
+                      <td className="p-2">{t.rule}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ---- PARSE TREE ---- */}
+        {traceResult && (
+          <div className="mt-12">
+            <h3 className="text-xl font-semibold mb-4">Parse Tree</h3>
+
+            {/* QUITA el <div> con el <ul> y pon esto 👇 */}
+            <div style={{ width: '800px', height: '800px' }}>
+              <Tree
+                data={[toD3(traceResult.tree)]}   // react‑d3‑tree espera un array de roots
+                orientation="vertical"            // vertical clásico
+                collapsible={false}               // que no se colapse al click
+                pathFunc = "straight"          // líneas en ángulo
+                renderCustomNodeElement={renderNode} 
+                pathClassFunc={() => "custom-link"}
+              />
+            </div>
+          </div>
+        )}
+        
       </main>
+      <Chatbot />
     </div>
   );
 }
