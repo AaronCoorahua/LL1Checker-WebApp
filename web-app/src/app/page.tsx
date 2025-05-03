@@ -1,6 +1,6 @@
 "use client";
 
-import { JSX, useEffect, useState } from "react";
+import { JSX, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import axios from "axios";
 import Tree from 'react-d3-tree';
@@ -17,13 +17,34 @@ interface TreeNode {
   children?: TreeNode[];
 }
 
+interface ExplorePoint {
+  pos:   number;
+  nt:    string;
+  token: string;
+  rule:  string;
+}
+
+interface RecoverPoint {
+  step:   number;   
+  token:  string;
+  non_terminal: string;
+}
+
+interface TraceResult {
+  trace:          TraceEntry[];
+  tree:           TreeNode;
+  accepted:       boolean;          
+  explore_points: ExplorePoint[];  
+  extract_points: RecoverPoint[]; 
+}
+
+
 const toD3 = (n: TreeNode): any => ({
   name: n.label,
   children: n.children?.map(toD3) ?? [],
 });
 
 export default function GrammarSelector() {
-  /* ---------- ejemplos ---------- */
   const examples = [
     { title: "Balanced 0's and 1's", grammar: `S -> 0 S 1 | ε` },
     { title: "List of ID's", grammar: `L  -> [ Items ]\nItems -> id Items'\nItems' -> , id Items' | ε`},
@@ -36,6 +57,9 @@ export default function GrammarSelector() {
     { title: "If-Else", grammar: `S -> if ( C ) S else S | assign` },
     { title: "Repeated AB Pattern", grammar: `S -> A S'\nS' -> B S' | ε\nA -> a\nB -> b` }
   ];
+
+  const safeJoin = (val: unknown, sep = " ") =>
+    Array.isArray(val) ? val.join(sep) : "";
 
   useEffect(() => {
     const styleTag = document.createElement("style");
@@ -51,7 +75,6 @@ export default function GrammarSelector() {
     };
   }, []);
 
-  /* ---------- state ---------- */
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [customGrammar, setCustomGrammar] = useState("");
   const [error, setError]   = useState("");
@@ -59,12 +82,14 @@ export default function GrammarSelector() {
 
   const [copiedSymbol, setCopiedSymbol] = useState<string | null>(null);
 
-  const [traceResult, setTraceResult] =
-    useState<{ trace: TraceEntry[]; tree: TreeNode } | null>(null);
+  const [traceResult,setTraceResult] = useState<TraceResult | null>(null);
+
   const [inputString, setInputString] = useState("");
   const [maxSteps,   setMaxSteps]     = useState(100);
 
-  /* ---------- helpers ---------- */
+  const analyzeRef = useRef<HTMLDivElement | null>(null);
+  const traceRef   = useRef<HTMLDivElement | null>(null);
+
   const grammarToPayload = () => {
     const lines = customGrammar.trim().split("\n");
     return {
@@ -86,12 +111,15 @@ export default function GrammarSelector() {
   const handleTraceTree = async () => {
     try {
       const res = await axios.post(
-        `${process.env.NEXT_PUBLIC_API_BASE_URL}/trace-tree`,
+        `${process.env.NEXT_PUBLIC_API_BASE_URL}/grammar/run_input`,
         { ...grammarToPayload(),
           input_string: inputString,
           max_steps: Math.max(1, maxSteps) }
       );
       setTraceResult(res.data);
+      requestAnimationFrame(() =>
+        traceRef.current?.scrollIntoView({ behavior: "smooth" })
+      );
     } catch (e) { console.error(e); setTraceResult(null); }
   };
 
@@ -101,9 +129,9 @@ export default function GrammarSelector() {
     for (const l of lines) {
       if (!l.includes("->")) { if (txt.trim()===""){setError("");} else setError("Each rule must contain '->'"); return;}
       const [lhs, rhs] = l.split("->");
-      if (!lhs.trim() || !rhs.trim()) { setError("Missing LHS or RHS."); return; }
+      if (!lhs.trim() || !rhs.trim()) { setError("Missing Left side or Right side."); return; }
       if (rhs.includes("|") && !/\s\|\s/.test(rhs)) { setError("Add spaces around |."); return; }
-      if (lhs.includes("|")) { setError("'|' cannot be on LHS."); return; }
+      if (lhs.includes("|")) { setError("'|' cannot be a Non Terminal."); return; }
     }
     setError("");
   };
@@ -111,10 +139,13 @@ export default function GrammarSelector() {
   const handleAnalyze = async () => {
     try {
       const res = await axios.post(
-        `${process.env.NEXT_PUBLIC_API_BASE_URL}/first-follow`,
+        `${process.env.NEXT_PUBLIC_API_BASE_URL}/grammar/load`,
         grammarToPayload()
       );
       setResult(res.data);
+      requestAnimationFrame(() =>
+        analyzeRef.current?.scrollIntoView({ behavior: "smooth" })
+      );
     } catch { setResult(null); }
   };
 
@@ -124,7 +155,6 @@ export default function GrammarSelector() {
     setTimeout(()=>setCopiedSymbol(null),1200);
   };
 
-  /* ---------- parsing‑table ---------- */
   const renderParsingTable = () => {
     if (!result || !result.parse_table) return null;
   
@@ -184,13 +214,13 @@ export default function GrammarSelector() {
           <span className="font-semibold text-lg">LL1 Checker</span>
         </div>
         <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-300">
-          Powered by Next.js
+          Powered by
           <Image src="/next.svg" alt="Next.js logo" width={60} height={14} className="dark:invert" />
         </div>
       </header>
 
       <main className="flex-grow flex flex-col gap-6 p-8 sm:p-16 max-w-5xl mx-auto">
-        <h1 className="text-2xl sm:text-3xl font-semibold text-center">Select an Example Grammar LL(1)</h1>
+
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {examples.map((ex, idx) => (
@@ -248,7 +278,7 @@ export default function GrammarSelector() {
             Analyze
           </button>
         </div>
-
+        <div ref={analyzeRef}>
         {result && result.is_LL1 === true && result.conflicts.length === 0 && (
           <>
             <div className="mt-8">
@@ -265,8 +295,8 @@ export default function GrammarSelector() {
                   {result.non_terminals.map((nt: any) => (
                     <tr key={nt} className="border-t border-gray-700 dark:border-gray-600">
                       <td className="p-2 font-mono">{nt}</td>
-                      <td className="p-2 font-mono">{result.first_sets[nt].join(", ")}</td>
-                      <td className="p-2 font-mono">{result.follow_sets[nt].join(", ")}</td>
+                      <td className="p-2 font-mono">{safeJoin(result.first_sets?.[nt], ", ")}</td>
+                      <td className="p-2 font-mono">{safeJoin(result.follow_sets?.[nt], ", ")}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -283,13 +313,14 @@ export default function GrammarSelector() {
               <div key={i} className="mb-4">
                 <p><strong>Conflicto:</strong> {conflict.type}</p>
                 <p><strong>No terminal:</strong> {conflict.non_terminal}</p>
-                <p><strong>Producciones:</strong> {conflict.productions.join("  |  ")}</p>
-                <p><strong>Intersección:</strong> {conflict.intersection.join(", ")}</p>
+                <p><strong>Intersección:</strong> {safeJoin(conflict.intersection, ", ")}</p>
+                <p><strong>Producciones:</strong> {safeJoin(conflict.productions, "  |  ")}</p>
                 <p className="italic text-sm mt-1">💡 {conflict.suggestion}</p>
               </div>
             ))}
           </div>
         )}
+        </div>
 
 <div className="mt-12">
           <h3 className="text-xl font-semibold mb-4">Run LL(1) Parser</h3>
@@ -320,6 +351,7 @@ export default function GrammarSelector() {
         </div>
 
         {/* ---- TRACE STACK TABLE ---- */}
+        <div ref={traceRef}>
         {traceResult && (
           <div className="mt-12">
             <h3 className="text-xl font-semibold mb-4">Parsing Trace (Stack / Input / Rule)</h3>
@@ -334,16 +366,65 @@ export default function GrammarSelector() {
                 </thead>
                 <tbody>
                   {traceResult.trace.map((t,i)=>(
-                    <tr key={i} className="border-t border-gray-600">
-                      <td className="p-2 font-mono border-r border-gray-600">{t.stack.join(" ")}</td>
-                      <td className="p-2 font-mono border-r border-gray-600">{t.input.join(" ")}</td>
+                    <tr
+                    key={i}
+                    className={
+                      "border-t border-gray-600 " +
+                      (t.rule.includes("(explore)")
+                          ? "bg-yellow-200 dark:bg-yellow-900"
+                          : t.rule.includes("(extract)")
+                          ? "bg-blue-200  dark:bg-blue-900"
+                          : "")
+                    }
+                  >
+                      <td className="p-2 font-mono border-r border-gray-600">
+                        {safeJoin(t.stack)}
+                      </td>
+                      <td className="p-2 font-mono border-r border-gray-600">
+                        {safeJoin(t.input)}
+                      </td>
                       <td className="p-2">{t.rule}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            {traceResult && (
+              <p
+                className={`mt-6 text-lg font-semibold ${
+                  traceResult.accepted ? "text-green-600" : "text-red-600"
+                }`}
+              >
+                {traceResult.accepted ? "✅ Input ACCEPTED" : "❌ Input REJECTED"}
+              </p>
+            )}
+            {traceResult && traceResult.explore_points?.length > 0 && (
+            <div className="mt-8">
+              <h4 className="font-semibold mb-2">Skipped Tokens: (explore) </h4>
+              <ul className="text-sm list-disc ml-6">
+                {traceResult.explore_points.map((p,i)=>(
+                  <li key={i}>
+                    Position {p.pos}: <code>{p.token}</code>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {traceResult && traceResult.extract_points?.length > 0 && (
+            <div className="mt-8">
+              <h4 className="font-semibold mb-2">Pop Non Terminal: (extract)</h4>
+              <ul className="text-sm list-disc ml-6">
+                {traceResult.extract_points.map((p,i)=>(
+                  <li key={i}>
+                    Step {p.step}: <code>{p.non_terminal} -{">"} </code> con token&nbsp;
+                    <code>{p.token}</code>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           </div>
+          
         )}
 
         {/* ---- PARSE TREE ---- */}
@@ -351,22 +432,22 @@ export default function GrammarSelector() {
           <div className="mt-12">
             <h3 className="text-xl font-semibold mb-4">Parse Tree</h3>
 
-            {/* QUITA el <div> con el <ul> y pon esto 👇 */}
             <div style={{ width: '800px', height: '800px' }}>
               <Tree
-                data={[toD3(traceResult.tree)]}   // react‑d3‑tree espera un array de roots
-                orientation="vertical"            // vertical clásico
-                collapsible={false}               // que no se colapse al click
-                pathFunc = "straight"          // líneas en ángulo
+                data={[toD3(traceResult.tree)]}   
+                orientation="vertical"            
+                collapsible={false}               
+                pathFunc = "straight"          
                 renderCustomNodeElement={renderNode} 
                 pathClassFunc={() => "custom-link"}
               />
             </div>
           </div>
         )}
-        
+        </div>
       </main>
       <Chatbot />
     </div>
+    
   );
 }

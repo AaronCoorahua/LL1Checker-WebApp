@@ -1,7 +1,11 @@
-from fastapi import FastAPI
+# index.py
+
+import re
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
-from fastapi.middleware.cors import CORSMiddleware
+from LL_parser import Grammar, Rule
 
 app = FastAPI()
 
@@ -12,301 +16,124 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------- modelos ----------
-class Rule(BaseModel):
+class RuleIn(BaseModel):
     lhs: str
     rhs: List[str]
 
 class GrammarInput(BaseModel):
-    grammar: List[Rule]
-    start_symbol: str            # ← sin input_string aquí
+    grammar: List[RuleIn]
+    start_symbol: str
 
 class TraceInput(GrammarInput):
-    input_string: str            # tokens separados por espacio
+    input_string: str
     max_steps: int = 100
 
+def build_grammar_from_input(data: GrammarInput) -> Grammar:
+    """
+    Crea una instancia Grammar, le inyecta las reglas desde el modelo Pydantic,
+    y retorna el objeto listo para compute_first/follow y tabla.
+    """
+    # Reconstruimos el string con saltos de línea:
+    lines = []
+    for r in data.grammar:
+        rhs = " | ".join(r.rhs).replace("ε", "_")
+        lines.append(f"{r.lhs} -> {rhs}")
+    # Aseguramos que la primera línea defina start_symbol:
+    content = "\n".join(lines)
+    g = Grammar()
+    g.load_from_string(content)
+    g.compute_first()
+    g.compute_follow()
+    g.build_ll1_table()
+    return g
 
-# ---------- /first-follow ----------
-@app.post("/first-follow")
+@app.post("/grammar/load")
 def first_follow(data: GrammarInput):
-    # … (código idéntico al tuyo: cálculo FIRST, FOLLOW, tabla y conflictos)
-    #              ↓↓↓  --- nada cambió aquí ---
-    grammar_dict = {}
-    non_terminals, terminals = set(), set()
+    g = build_grammar_from_input(data)
 
-    for rule in data.grammar:
-        lhs = rule.lhs.strip()
-        non_terminals.add(lhs)
-        grammar_dict.setdefault(lhs, [])
-        for alt in rule.rhs:
-            grammar_dict[lhs].append(alt.strip().split())
+    raw_first  = g.get_first()   
+    raw_follow = g.get_follow()
 
-    for rhs in grammar_dict.values():
-        for prod in rhs:
-            for sym in prod:
-                if sym not in non_terminals and sym != "ε":
-                    terminals.add(sym)
-    terminals = sorted(terminals) + ["$"]
-
-    first = {nt: set() for nt in non_terminals}
-
-    def f(x):
-        if x not in non_terminals:
-            return {x}
-        if first[x]:
-            return first[x]
-        for p in grammar_dict[x]:
-            for s in p:
-                fs = f(s)
-                first[x] |= fs - {"ε"}
-                if "ε" not in fs:
-                    break
-            else:
-                first[x].add("ε")
-        return first[x]
-
-    for nt in non_terminals:
-        f(nt)
-
-    follow = {nt: set() for nt in non_terminals}
-    follow[data.start_symbol].add("$")
-    changed = True
-    while changed:
-        changed = False
-        for lhs, prods in grammar_dict.items():
-            for prod in prods:
-                for i, B in enumerate(prod):
-                    if B in non_terminals:
-                        trailer = prod[i + 1 :]
-                        trailer_first = set()
-                        if trailer:
-                            for s in trailer:
-                                trailer_first |= f(s) - {"ε"}
-                                if "ε" not in f(s):
-                                    break
-                            else:
-                                trailer_first.add("ε")
-                        else:
-                            trailer_first.add("ε")
-                        before = len(follow[B])
-                        follow[B] |= trailer_first - {"ε"}
-                        if "ε" in trailer_first:
-                            follow[B] |= follow[lhs]
-                        if len(follow[B]) > before:
-                            changed = True
-
-    table = {nt: {t: None for t in terminals} for nt in non_terminals}
-    conflicts, is_ll1 = [], True
-    for lhs, prods in grammar_dict.items():
-        for prod in prods:
-            prod_first = set()
-            for s in prod:
-                prod_first |= f(s)
-                if "ε" not in f(s):
-                    break
-            else:
-                prod_first.add("ε")
-
-            for t in prod_first - {"ε"}:
-                if table[lhs][t]:
-                    conflicts.append(
-                        {
-                            "non_terminal": lhs,
-                            "type": "FIRST/FIRST conflict",
-                            "productions": [
-                                " ".join(table[lhs][t]),
-                                " ".join(prod),
-                            ],
-                            "intersection": [t],
-                            "suggestion": f"Factoriza las producciones comunes de {lhs}",
-                        }
-                    )
-                    is_ll1 = False
-                else:
-                    table[lhs][t] = prod
-
-            if "ε" in prod_first:
-                for t in follow[lhs]:
-                    if table[lhs][t]:
-                        conflicts.append(
-                            {
-                                "non_terminal": lhs,
-                                "type": "FIRST/FOLLOW conflict",
-                                "productions": [
-                                    " ".join(table[lhs][t]),
-                                    f"{lhs} -> ε",
-                                ],
-                                "intersection": [t],
-                                "suggestion": f"Verifica si ε y FOLLOW se cruzan en {lhs}",
-                            }
-                        )
-                        is_ll1 = False
-                    else:
-                        table[lhs][t] = ["ε"]
-
-
-    return {
-        "is_LL1": is_ll1,
-        "terminals": terminals,
-        "non_terminals": sorted(non_terminals),
-        "first_sets": {nt: sorted(list(fs)) for nt, fs in first.items()},
-        "follow_sets": {nt: sorted(list(fw)) for nt, fw in follow.items()},
-        "grammar": [
-            {"lhs": lhs, "rhs": [" ".join(p) for p in grammar_dict[lhs]]}
-            for lhs in grammar_dict
-        ],
-        "conflicts": conflicts,
-        "parse_table": {
-            nt: {
-                t: (" ".join(table[nt][t]) if table[nt][t] else "")
-                for t in terminals
-            }
-            for nt in non_terminals
-        },
-
+    # Sustituir "_" por "ε"
+    first_sets = {
+        nt: [sym if sym != "_" else "ε" for sym in syms]
+        for nt, syms in raw_first.items()
+    }
+    follow_sets = {
+        nt: [sym if sym != "_" else "ε" for sym in syms]
+        for nt, syms in raw_follow.items()
     }
 
-
-# ---------- /trace-tree ----------
-@app.post("/trace-tree")
-def trace_tree(data: TraceInput):
-    # ——— construir estructuras auxiliares exactamente igual que arriba ———
-    grammar_dict, non_terminals, terminals = {}, set(), set()
-    for rule in data.grammar:
-        lhs = rule.lhs.strip()
-        non_terminals.add(lhs)
-        grammar_dict.setdefault(lhs, [])
-        for alt in rule.rhs:
-            grammar_dict[lhs].append(alt.strip().split())
-
-    for rhs in grammar_dict.values():
-        for prod in rhs:
-            for sym in prod:
-                if sym not in non_terminals and sym != "ε":
-                    terminals.add(sym)
-    terminals = sorted(terminals) + ["$"]
-
-    first = {nt: set() for nt in non_terminals}
-
-    def f(x):
-        if x not in non_terminals:
-            return {x}
-        if first[x]:
-            return first[x]
-        for p in grammar_dict[x]:
-            for s in p:
-                fs = f(s)
-                first[x] |= fs - {"ε"}
-                if "ε" not in fs:
-                    break
-            else:
-                first[x].add("ε")
-        return first[x]
+    terminals     = g.get_terminals()
+    non_terminals = g.get_non_terminals()
 
     for nt in non_terminals:
-        f(nt)
+        if nt not in first_sets:
+            first_sets[nt] = []
+        if nt not in follow_sets:
+            follow_sets[nt] = []
 
-    follow = {nt: set() for nt in non_terminals}
-    follow[data.start_symbol].add("$")
-    changed = True
-    while changed:
-        changed = False
-        for lhs, prods in grammar_dict.items():
-            for prod in prods:
-                for i, B in enumerate(prod):
-                    if B in non_terminals:
-                        trailer = prod[i + 1 :]
-                        trailer_first = set()
-                        if trailer:
-                            for s in trailer:
-                                trailer_first |= f(s) - {"ε"}
-                                if "ε" not in f(s):
-                                    break
-                            else:
-                                trailer_first.add("ε")
-                        else:
-                            trailer_first.add("ε")
-                        before = len(follow[B])
-                        follow[B] |= trailer_first - {"ε"}
-                        if "ε" in trailer_first:
-                            follow[B] |= follow[lhs]
-                        if len(follow[B]) > before:
-                            changed = True
+    is_ll1, conflicts = g.is_ll1()
+    output_conflicts = []
+    # FIRST/FIRST
+    for prod, syms in conflicts['first_conflicts'].items():
+        m = re.match(r"(.+?) \| (.+)", prod)
+        if m:
+            p1, p2 = m.group(1).strip(), m.group(2).strip()
+            nt = p1.split("→")[0].strip()
+            output_conflicts.append({
+                "non_terminal": nt,
+                "type": "FIRST/FIRST conflict",
+                "productions": [p1, p2],
+                "intersection": sorted(list(syms)),
+                "suggestion": f"Factoriza las producciones de {nt} que comienzan con símbolos comunes."
+            })
 
-    table = {nt: {t: None for t in terminals} for nt in non_terminals}
-    for lhs, prods in grammar_dict.items():
-        for prod in prods:
-            prod_first = set()
-            for s in prod:
-                fs = f(s)
-                prod_first |= fs
-                if "ε" not in fs:
-                    break
+    # FIRST/FOLLOW
+    for nt, data_ in conflicts['follow_conflicts'].items():
+        output_conflicts.append({
+            "non_terminal": nt,
+            "type": "FIRST/FOLLOW conflict",
+            "first":        sorted(list(data_['first'])),
+            "follow":       sorted(list(data_['follow'])),
+            "intersection": sorted(list(data_['intersection'])),
+            "suggestion":   f"Revisa si ε debe estar en FIRST({nt}) o si {nt} debe eliminar la producción ε."
+        })
+
+    raw = g.table
+    parse_table = {}
+    for nt, row in raw.items():
+        parse_table[nt] = {}
+        for t, entries in row.items():
+            if not entries:
+                parse_table[nt][t] = ""
             else:
-                prod_first.add("ε")
+                parts = []
+                for e in entries:
+                    if isinstance(e, Rule):
+                        parts.append(repr(e).replace("_","ε"))
+                    else:
+                        parts.append(str(e))
+                parse_table[nt][t] = " | ".join(parts)
 
-            for t in prod_first - {"ε"}:
-                table[lhs][t] = prod
-            if "ε" in prod_first:
-                for t in follow[lhs]:
-                    table[lhs][t] = ["ε"]
+    return {
+        "is_LL1":       is_ll1,
+        "terminals":     terminals,
+        "non_terminals": non_terminals,
+        "first_sets":    first_sets,
+        "follow_sets":   follow_sets,
+        "conflicts":     output_conflicts,
+        "parse_table":   parse_table,
+    }
 
-    # ——— ejecución del parser LL(1) ———
-    trace = []
-    input_tokens = data.input_string.strip().split() + ["$"]
-    stack = ["$", data.start_symbol]
-    index = 0
+@app.post("/grammar/run_input")
+async def trace_tree(data: TraceInput):
+    g = build_grammar_from_input(data)
 
-    def snap(stk, inp, rule):
-        return {"stack": stk[:], "input": inp[:], "rule": rule}
-
-    def node(lbl):
-        return {"label": lbl, "children": []}
-
-    root = node(data.start_symbol)
-    tree_stack = [root]  # paralelo a ‘stack’, sin el símbolo $
-
-    steps = 0
-    while stack and steps < data.max_steps:
-        top = stack.pop()
-
-        # ----- el símbolo $ se maneja aparte -----
-        if top == "$":
-            rule = "accept" if input_tokens[index] == "$" else "error: input not empty"
-            trace.append(snap(stack, input_tokens[index:], rule))
-            break
-
-        tree_node = tree_stack.pop()
-        current = input_tokens[index] if index < len(input_tokens) else "$"
-
-        if top == current:  # match terminal
-            trace.append(snap(stack, input_tokens[index:], f"match {top}"))
-            index += 1
-            #tree_node["children"].append({"label": top})
-
-        elif top in terminals:  # terminal inesperado
-            trace.append(snap(stack, input_tokens[index:], f"error: unexpected {top}"))
-            break
-
-        elif table[top].get(current):  # expandir producción
-            prod = table[top][current]
-            trace.append(snap(stack, input_tokens[index:], f"{top} -> {' '.join(prod)}"))
-
-            if prod == ["ε"]:
-                tree_node["children"].append({"label": "ε"})
-            else:
-                # hijos en orden original
-                children = [node(s) for s in prod]
-                tree_node["children"].extend(children)
-                # push símbolos y nodos en orden inverso
-                for s in reversed(prod):
-                    stack.append(s)
-                for child in reversed(children):
-                    tree_stack.append(child)
-        else:  # celda vacía → error
-            trace.append(snap(stack, input_tokens[index:], f"error: no rule for {top} with {current}"))
-            break
-
-        steps += 1
-
-    return {"trace": trace, "tree": root}
+    result = g.parse_2(
+        input_string=data.input_string,
+        max_steps   =data.max_steps
+    )
+    for step in result["trace"]:
+        step["rule"] = step["rule"].replace("_", "ε")
+    return result

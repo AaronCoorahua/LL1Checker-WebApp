@@ -39,8 +39,9 @@ class Grammar:
 
     def load_from_string(self, content: str):
         lines = [line.strip() for line in content.strip().split('\n') if line.strip()]
-
-        self.start_symbol = lines[0][0]
+        # El primer carácter de la primera línea es símbolo inicial
+        lhs0 = lines[0].split("->", 1)[0].strip()
+        self.start_symbol = lhs0
 
         for line in lines:
             parts = line.split("->")
@@ -48,28 +49,39 @@ class Grammar:
                 continue
             left = parts[0].strip()
             right = parts[1].strip()
-            symbols = right.split() if right != '_' else ['_']
 
-            self.rules.append(Rule(left, symbols))
+            # 1) dividir alternativas por '|'
+            alts = [alt.strip() for alt in right.split('|')]
 
-            if left not in self.non_terminals:
-                self.non_terminals[left] = NonTerminal(left)
+            # 2) procesar cada alternativa por separado
+            for alt in alts:
+                symbols = alt.split() if alt != '_' else ['_']
+                # guardamos la Regla
+                self.rules.append(Rule(left, symbols))
 
-            self.non_terminals[left].productions.append(symbols)
+                # registramos el no-terminal
+                if left not in self.non_terminals:
+                    self.non_terminals[left] = NonTerminal(left)
+                # añadimos la producción
+                self.non_terminals[left].productions.append(symbols)
 
-            for symbol in symbols:
-                if symbol == '_':
-                    continue
-                if symbol.isupper():
-                    if symbol not in self.non_terminals:
-                        self.non_terminals[symbol] = NonTerminal(symbol)
-                else:
-                    if symbol not in self.terminals:
-                        self.terminals[symbol] = Terminal(symbol)
+                # registrar símbolos terminales y no terminales
+                for sym in symbols:
+                    if sym == '_':  # ε
+                        continue
+                    if sym.isupper():
+                        if sym not in self.non_terminals:
+                            self.non_terminals[sym] = NonTerminal(sym)
+                    else:
+                        if sym not in self.terminals:
+                            self.terminals[sym] = Terminal(sym)
 
+        # Añadimos '$'
         self.terminals['$'] = Terminal('$')
+        # Marcamos el inicio y su follow
         self.non_terminals[self.start_symbol].is_start = True
         self.non_terminals[self.start_symbol].follow.add('$')
+
 
     def load_from_file(self, filename):
         with open(filename, 'r') as f:
@@ -210,10 +222,6 @@ class Grammar:
                 for terminal in self.non_terminals[left].follow:
                     self.table[left][terminal].append(rule)
 
-            # Paso 3: Caso especial para S -> A a con $ ∈ FOLLOW(S)
-            if left == 'S' and 'a' in first_alpha and '$' in self.non_terminals[left].follow:
-                self.table[left]['$'].append(rule)
-
         self.apply_extrac()
         self.apply_explore()
 
@@ -270,80 +278,121 @@ class Grammar:
                     return False
         return True
 
-    def parse_2(self, input_string, max_steps):
-        stack = [('$', None), (self.start_symbol, None)]  # (símbolo, nodo padre)
-        input_tokens = input_string.strip().split() + ['$']
-        input_pointer = 0
+    def parse_2(self, input_string: str, max_steps: int):
+        stack          = [('$', None), (self.start_symbol, None)]  
+        input_tokens   = input_string.strip().split() + ['$']
+        input_ptr      = 0
 
-        trace = []
-        root = {"label": self.start_symbol, "children": []}
-        node_stack = [root]
-        step_count = 0
+        trace          = []
+        root           = {"label": self.start_symbol, "children": []}
+        step_count     = 0
+
+        used_explore   = False
+        used_extract   = False
+        explore_points = []      
+        extract_points = []      
 
         while stack:
             step_count += 1
-            if step_count > max_steps:
+            if step_count > max_steps + 1:
                 trace.append({
                     "stack": [sym for sym, _ in stack],
-                    "input": input_tokens[input_pointer:],
-                    "rule": f"Error: se superó el límite de pasos ({max_steps})"
+                    "input": input_tokens[input_ptr:],
+                    "rule" : f"Error: Max‑steps limit ({max_steps})"
                 })
                 break
 
-            top_symbol, parent_node = stack.pop()
-            current_token = input_tokens[input_pointer] if input_pointer < len(input_tokens) else '$'
+            top_symbol, parent = stack.pop()
+            current_tok = input_tokens[input_ptr] if input_ptr < len(input_tokens) else '$'
 
             trace.append({
                 "stack": [sym for sym, _ in stack] + [top_symbol],
-                "input": input_tokens[input_pointer:],
-                "rule": ""
+                "input": input_tokens[input_ptr:],
+                "rule" : ""
             })
 
-            if top_symbol == '$' and current_token == '$':
+            if top_symbol == '$' and current_tok == '$':
                 trace[-1]["rule"] = "accept"
                 break
 
-            elif top_symbol in self.terminals or top_symbol == '$':
-                if top_symbol == current_token:
+            if top_symbol in self.terminals or top_symbol == '$':
+                if top_symbol == current_tok:
                     trace[-1]["rule"] = f"match '{top_symbol}'"
-                    input_pointer += 1
-                    if parent_node is not None:
-                        parent_node["children"].append({"label": top_symbol})
+                    input_ptr += 1
+                    if parent is not None:
+                        parent["children"].append({"label": top_symbol})
                 else:
-                    trace[-1]["rule"] = f"Error: se esperaba '{top_symbol}', pero se encontró '{current_token}'"
+                    trace[-1]["rule"] = (
+                        f"Error: se esperaba '{top_symbol}', "
+                        f"pero se encontró '{current_tok}'"
+                    )
+                continue       # siguiente iteración
+
+            if top_symbol in self.non_terminals:
+                cell = self.table[top_symbol].get(current_tok, [])
+
+                if cell and isinstance(cell[0], str) and cell[0] == "explore":
+                    used_explore = True
+                    explore_points.append({
+                        "step"        : step_count,
+                        "token"       : current_tok,
+                        "non_terminal": top_symbol,
+                    })
+                    trace[-1]["rule"] = f"skip '{current_tok}' (explore)"
+                    input_ptr += 1                  # descarta token
+                    stack.append((top_symbol, parent)) 
+                    continue
+
+                if cell and isinstance(cell[0], str) and cell[0] == "extrac":
+                    used_extract = True
+                    extract_points.append({
+                        "step"        : step_count,
+                        "token"       : current_tok,
+                        "non_terminal": top_symbol,
+                    })
+                    trace[-1]["rule"] = f"sync‑pop {top_symbol} (extract)"
+                    continue          
+
+                if not cell or not isinstance(cell[0], Rule):
+                    trace[-1]["rule"] = (
+                        f"Error: sin producción para {top_symbol} con '{current_tok}'"
+                    )
                     break
 
-            elif top_symbol in self.non_terminals:
-                productions = self.table[top_symbol].get(current_token, [])
-                if not productions or not isinstance(productions[0], Rule):
-                    trace[-1]["rule"] = f"Error: sin producción para {top_symbol} con '{current_token}'"
-                    break
-
-                rule = productions[0]
+                rule = cell[0]
                 trace[-1]["rule"] = f"{rule.left} -> {' '.join(rule.right)}"
 
                 node = {"label": top_symbol, "children": []}
-                if parent_node is not None:
-                    parent_node["children"].append(node)
+                if parent is not None:
+                    parent["children"].append(node)
                 else:
                     root = node
-                node_stack.append(node)
 
-                if rule.right != ['_']:
+                if rule.right != ['_']:                 # no ε
                     for sym in reversed(rule.right):
                         stack.append((sym, node))
                 else:
                     node["children"].append({"label": "ε"})
+                continue
 
-            else:
-                trace[-1]["rule"] = f"Error: símbolo desconocido '{top_symbol}'"
-                break
+            trace[-1]["rule"] = f"Error: símbolo desconocido '{top_symbol}'"
+            break
+
+        accepted = (
+            trace and trace[-1]["rule"] == "accept"
+            and not used_explore
+            and not used_extract
+        )
 
         return {
-            "trace": trace,
-            "tree": root
+            "trace"          : trace,
+            "tree"           : root,
+            "explore_points" : explore_points,
+            "extract_points" : extract_points,
+            "accepted"       : accepted,
         }
 
+    
     def parse(self, input_string):
         """
         Realiza el análisis sintáctico de una cadena y genera la tabla de derivación.
