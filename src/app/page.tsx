@@ -351,8 +351,7 @@ export default function GrammarSelector() {
           <button
             onClick={handleTraceTree}
             disabled={!customGrammar.trim() || !inputString.trim()}
-            className="ml-5 mt-4 px-6 py-2 bg-black text-white border border-white rounded-md font-medium text-sm transition-transform transition-colors hover:bg-white hover:text-black hover:border-black hover:scale-105 active:scale-95 disabled:opacity-40">            
-            Trace & Tree
+            className="ml-5 mt-4 px-6 py-2 bg-black text-white border border-white rounded-md font-medium text-sm transition-transform transition-colors hover:bg-white hover:text-black hover:border-black hover:scale-105 active:scale-95 disabled:opacity-40">
             {loadingTrace ? "Procesando…" : "Trace & Tree"}
           </button>
         </div>
@@ -423,7 +422,7 @@ export default function GrammarSelector() {
               <ul className="text-sm list-disc ml-6">
                 {traceResult.extract_points.map((p,i)=>(
                   <li key={i}>
-                    Step {p.step}: <code>{p.non_terminal} -{">"} </code> con token&nbsp;
+                    Step {p.step}: <code>{p.non_terminal} -{">"} </code> with token&nbsp;
                     <code>{p.token}</code>
                   </li>
                 ))}
@@ -454,6 +453,9 @@ export default function GrammarSelector() {
         </div>
       </main>
       <Chatbot />
+      <footer className="w-full py-4 text-center bg-gray-100 dark:bg-gray-900 text-sm text-gray-600 dark:text-gray-400">
+        © {'\u00A0'}{'\u00A0'}{'\u00A0'}Aaron Coorahua | Jefersson Quilcaña | Gadiel Velarde
+      </footer>
     </div>
     
   );
