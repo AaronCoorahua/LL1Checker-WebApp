@@ -104,7 +104,7 @@ export default function GrammarSelector() {
 
   const handleTraceTree = async () => {
     try {
-      const res = await axios.post("api/grammar/run_input",
+      const res = await axios.post("/grammar/run_input",
         { ...grammarToPayload(),
           input_string: inputString,
           max_steps: Math.max(1, maxSteps) }
@@ -131,7 +131,7 @@ export default function GrammarSelector() {
 
   const handleAnalyze = async () => {
     try {
-      const res = await axios.post("api/grammar/load",
+      const res = await axios.post("/grammar/load",
         grammarToPayload()
       );
       setResult(res.data);
