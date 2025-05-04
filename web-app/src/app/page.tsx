@@ -104,8 +104,7 @@ export default function GrammarSelector() {
 
   const handleTraceTree = async () => {
     try {
-      const res = await axios.post(
-        `${process.env.NEXT_PUBLIC_API_BASE_URL}/grammar/run_input`,
+      const res = await axios.post("api/grammar/run_input",
         { ...grammarToPayload(),
           input_string: inputString,
           max_steps: Math.max(1, maxSteps) }
@@ -132,8 +131,7 @@ export default function GrammarSelector() {
 
   const handleAnalyze = async () => {
     try {
-      const res = await axios.post(
-        `${process.env.NEXT_PUBLIC_API_BASE_URL}/grammar/load`,
+      const res = await axios.post("api/grammar/load",
         grammarToPayload()
       );
       setResult(res.data);
