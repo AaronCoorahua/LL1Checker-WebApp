@@ -104,7 +104,7 @@ export default function GrammarSelector() {
 
   const handleTraceTree = async () => {
     try {
-      const res = await axios.post("https://compiladores-ll-1-backend.vercel.app/gramar/run-input",
+      const res = await axios.post("https://compiladores-ll-1-backend.vercel.app/grammar/run-input",
         { ...grammarToPayload(),
           input_string: inputString,
           max_steps: Math.max(1, maxSteps) }
