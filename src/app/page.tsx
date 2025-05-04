@@ -90,6 +90,10 @@ export default function GrammarSelector() {
   const analyzeRef = useRef<HTMLDivElement | null>(null);
   const traceRef   = useRef<HTMLDivElement | null>(null);
 
+
+  const [loadingAnalyze, setLoadingAnalyze] = useState(false);
+  const [loadingTrace,   setLoadingTrace]   = useState(false);
+
   const grammarToPayload = () => {
     const lines = customGrammar.trim().split("\n");
     return {
@@ -103,6 +107,7 @@ export default function GrammarSelector() {
 
 
   const handleTraceTree = async () => {
+    setLoadingTrace(true);
     try {
       const res = await axios.post("https://compiladores-ll-1-backend.vercel.app/grammar/run-input",
         { ...grammarToPayload(),
@@ -113,7 +118,10 @@ export default function GrammarSelector() {
       requestAnimationFrame(() =>
         traceRef.current?.scrollIntoView({ behavior: "smooth" })
       );
-    } catch (e) { console.error(e); setTraceResult(null); }
+    } catch (e) { console.error(e); setTraceResult(null); 
+    } finally {
+      setLoadingTrace(false);
+    }
   };
 
   const handleGrammarChange = (txt: string) => {
@@ -130,6 +138,7 @@ export default function GrammarSelector() {
   };
 
   const handleAnalyze = async () => {
+    setLoadingAnalyze(true);
     try {
       const res = await axios.post("https://compiladores-ll-1-backend.vercel.app/grammar/load",
         grammarToPayload()
@@ -138,7 +147,11 @@ export default function GrammarSelector() {
       requestAnimationFrame(() =>
         analyzeRef.current?.scrollIntoView({ behavior: "smooth" })
       );
-    } catch { setResult(null); }
+    } catch { setResult(null); 
+
+    } finally {
+      setLoadingAnalyze(false);
+    }
   };
 
   const copyToClipboard = (s:string) => {
@@ -267,7 +280,7 @@ export default function GrammarSelector() {
             disabled={!!error || !customGrammar.trim()}
             className="mt-4 px-6 py-2 bg-black text-white border border-white rounded-md font-medium text-sm transition-transform transition-colors hover:bg-white hover:text-black hover:border-black hover:scale-105 active:scale-95 disabled:opacity-40"
           >
-            Analyze
+           {loadingAnalyze ? "Analizando…" : "Analyze"}
           </button>
         </div>
         <div ref={analyzeRef}>
@@ -338,7 +351,9 @@ export default function GrammarSelector() {
           <button
             onClick={handleTraceTree}
             disabled={!customGrammar.trim() || !inputString.trim()}
-            className="ml-5 mt-4 px-6 py-2 bg-black text-white border border-white rounded-md font-medium text-sm transition-transform transition-colors hover:bg-white hover:text-black hover:border-black hover:scale-105 active:scale-95 disabled:opacity-40">            Trace & Tree
+            className="ml-5 mt-4 px-6 py-2 bg-black text-white border border-white rounded-md font-medium text-sm transition-transform transition-colors hover:bg-white hover:text-black hover:border-black hover:scale-105 active:scale-95 disabled:opacity-40">            
+            Trace & Tree
+            {loadingTrace ? "Procesando…" : "Trace & Tree"}
           </button>
         </div>
 
