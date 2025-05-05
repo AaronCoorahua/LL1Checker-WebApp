@@ -213,14 +213,7 @@ export default function GrammarSelector() {
     <div className="flex flex-col min-h-screen">
       <header className="w-full flex justify-between items-center px-6 py-4 border-b dark:border-gray-800">
         <div className="flex items-center gap-2">
-          <Image src="/logo.png" alt="App logo" width={120} height={120} />
-        </div>
-        <div className="flex items-center gap-2">
           <span className="font-semibold text-lg">LL1 Checker</span>
-        </div>
-        <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-300">
-          Powered by
-          <Image src="/next.svg" alt="Next.js logo" width={60} height={14} className="dark:invert" />
         </div>
       </header>
 
